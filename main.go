@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/Shopify/sarama"
 	"langolier/env"
 	"log"
@@ -106,32 +107,33 @@ func main() {
 		topicPartitionOffsetStop,
 	)
 	for message := range partitionConsumer.Messages() {
-		// stop is inclusive, so only check if we've consumed an offset greater than it:
-		if message.Offset > topicPartitionOffsetStop {
-			log.Printf(
-				"stopping because consuming next message at offset %7d would exceed stop offset %7d\n",
-				message.Offset,
-				topicPartitionOffsetStop,
-			)
-			break
-		}
-
 		var match bool
 		var partition int32
 		var offset int64
 		var outputHeaders []sarama.RecordHeader
 
+		partition = message.Partition
+		offset = message.Offset
+
+		prefix := fmt.Sprintf("[%s][%3d][%7d]", topic, partition, offset)
+
+		// stop is inclusive, so only check if we've consumed an offset greater than it:
+		if offset > topicPartitionOffsetStop {
+			log.Printf("%s: stopping because consuming next message would exceed stop offset %7d\n", prefix, topicPartitionOffsetStop)
+			break
+		}
+
 		// skip existing tombstones:
 		if message.Value == nil {
-			log.Printf("skipping message for key='%s' because tombstone...\n", message.Key)
+			log.Printf("%s: skipping message for key='%s' because tombstone...\n", prefix, message.Key)
 			goto checkOffset
 		}
 		if len(message.Value) == 0 {
-			log.Printf("skipping message for key='%s' because tombstone...\n", message.Key)
+			log.Printf("%s: skipping message for key='%s' because tombstone...\n", prefix, message.Key)
 			goto checkOffset
 		}
 		if len(message.Headers) == 0 {
-			log.Printf("skipping message for key='%s' because no headers found...\n", message.Key)
+			log.Printf("%s: skipping message for key='%s' because no headers found...\n", prefix, message.Key)
 			goto checkOffset
 		}
 
@@ -148,14 +150,14 @@ func main() {
 			for _, v := range headerValuesBytes {
 				if bytes.Compare(h.Value, v) == 0 {
 					match = true
-					log.Printf("matched key='%s' on header %s='%s'\n", message.Key, h.Key, h.Value)
+					log.Printf("%s: matched key='%s' on header %s='%s'\n", prefix, message.Key, h.Key, h.Value)
 					break findMatch
 				}
 			}
 		}
 
 		if !match {
-			log.Printf("skipping message for key='%s' because no header matches...\n", message.Key)
+			log.Printf("%s: skipping message for key='%s' because no header matches...\n", prefix, message.Key)
 			goto checkOffset
 		}
 
@@ -166,7 +168,7 @@ func main() {
 		}
 
 		// produce tombstone for key:
-		log.Printf("writing tombstone for key='%s'...\n", message.Key)
+		log.Printf("%s: writing tombstone for key='%s'...\n", prefix, message.Key)
 		partition, offset, err = prod.SendMessage(&sarama.ProducerMessage{
 			Topic:     topic,
 			Key:       sarama.ByteEncoder(message.Key),
@@ -180,15 +182,15 @@ func main() {
 			return
 		}
 		if partition != message.Partition {
-			log.Fatalf("BUG: wrote to wrong partition! wrote to %d but should have written to %d\n", partition, message.Partition)
+			log.Fatalf("%s: BUG: wrote to wrong partition! wrote to %d but should have written to %d\n", prefix, partition, message.Partition)
 			return
 		}
 
-		log.Printf("wrote tombstone for key='%s' at offset %7d\n", message.Key, offset)
+		log.Printf("%s: wrote tombstone for key='%s' at offset %7d\n", prefix, message.Key, offset)
 
 	checkOffset:
 		if message.Offset >= topicPartitionOffsetStop {
-			log.Printf("stopping because reached offset %7d\n", offset)
+			log.Printf("%s: stopping because reached stop offset %7d\n", prefix, topicPartitionOffsetStop)
 			break
 		}
 	}
