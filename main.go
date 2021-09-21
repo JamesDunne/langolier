@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"github.com/Shopify/sarama"
 	"github.com/karrick/tparse"
+	flag "github.com/spf13/pflag"
 	"langolier/env"
 	"log"
 	"os"
@@ -44,56 +44,66 @@ func main() {
 		logNegMatch    bool
 	)
 
-	flag.StringVar(&topic, "topic", "", "kafka topic name; REQUIRED")
+	fs := flag.FlagSet{
+		Usage:                nil,
+		SortFlags:            false,
+		ParseErrorsWhitelist: flag.ParseErrorsWhitelist{},
+	}
 
-	flag.StringVar(&headerName, "header", "tenantId", "header name to match on")
-	flag.StringVar(&headerValuesStr, "values", "", "header values to match on (where value in [values]; comma-delimited; REQUIRED)")
+	fs.StringVar(&topic, "topic", "", "kafka topic name; REQUIRED")
 
-	flag.StringVar(&partitionsStr, "partitions", "all", "partitions to process (default 'all'; comma-delimited)")
+	fs.StringVar(&headerName, "header", "tenantId", "header name to match on")
+	fs.StringVar(&headerValuesStr, "values", "", "header values to match on (where value in [values]; comma-delimited; REQUIRED)")
 
-	flag.StringVar(&timeStartStr, "start", "0", "start time (inclusive; default earliest)")
-	flag.StringVar(&timeStopStr, "stop", "now", "stop time (inclusive; default now)")
+	fs.StringVar(&partitionsStr, "partitions", "all", "partitions to process; comma-delimited")
+
+	fs.StringVar(&timeStartStr, "start", "0", "start time (inclusive)")
+	fs.StringVar(&timeStopStr, "stop", "now", "stop time (inclusive)")
 
 	// "-log-ts=false" to disable these
-	flag.BoolVar(&logTombstones, "log-ts", true, "log tombstone messages consumed")
-	flag.BoolVar(&logBadMessages, "log-bad", false, "log bad messages which have no headers")
-	flag.BoolVar(&logPosMatch, "log-pos", true, "log positive matched messages")
-	flag.BoolVar(&logNegMatch, "log-neg", false, "log negative matched messages")
+	fs.BoolVar(&logTombstones, "log-ts", true, "log tombstone messages consumed")
+	fs.BoolVar(&logBadMessages, "log-bad", false, "log bad messages which have no headers")
+	fs.BoolVar(&logPosMatch, "log-pos", true, "log positive matched messages")
+	fs.BoolVar(&logNegMatch, "log-neg", false, "log negative matched messages")
 
-	flag.Parse()
+	err = fs.Parse(os.Args[1:])
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	valid := true
 
 	// validate required arguments:
 	if headerValuesStr == "" {
-		fmt.Println("required -values argument")
+		fmt.Println("required --values argument")
 		valid = false
 	}
 	if topic == "" {
-		fmt.Println("required -topic argument")
+		fmt.Println("required --topic argument")
 		valid = false
 	}
 	if !valid {
-		flag.Usage()
+		fs.PrintDefaults()
 		return
 	}
 
-	flag.PrintDefaults()
+	fs.PrintDefaults()
 
 	timeStart, err = tparse.ParseNow(time.RFC3339, timeStartStr)
 	if err != nil {
-		fmt.Printf("error parsing '-start' argument '%s': %v\n", timeStartStr, err)
+		fmt.Printf("error parsing '--start' argument '%s': %v\n", timeStartStr, err)
 		timeStart = time.Unix(0, 0)
 		err = nil
 	}
-	fmt.Printf("parsed -start '%s' as '%s'\n", timeStartStr, timeStart)
+	fmt.Printf("parsed --start '%s' as '%s'\n", timeStartStr, timeStart)
 
 	timeStop, err = tparse.ParseNow(time.RFC3339, timeStopStr)
 	if err != nil {
-		fmt.Printf("error parsing '-stop' argument '%s': %v\n", timeStopStr, err)
+		fmt.Printf("error parsing '--stop' argument '%s': %v\n", timeStopStr, err)
 		timeStop = time.Now()
 		err = nil
 	}
-	fmt.Printf("parsed -stop '%s' as '%s'\n", timeStopStr, timeStop)
+	fmt.Printf("parsed --stop '%s' as '%s'\n", timeStopStr, timeStop)
 
 	headerValues = strings.Split(headerValuesStr, ",")
 
