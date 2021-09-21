@@ -4,37 +4,27 @@ Langolier is a CLI tool to consume a Kafka topic and emit tombstones for message
 ## Usage
 ```
 Usage of langolier:
-  -header string
-    	header name to match on (default "tenantId")
-  -log-bad
-    	log bad messages which have no headers
-  -log-neg
-    	log negative matched messages
-  -log-pos
-    	log positive matched messages (default true)
-  -log-ts
-    	log tombstone messages consumed (default true)
-  -partitions string
-    	partitions to process (default 'all'; comma-delimited) (default "all")
-  -start string
-    	start time (inclusive; default earliest) (default "0")
-  -stop string
-    	stop time (inclusive; default now) (default "now")
-  -topic string
-    	kafka topic name; REQUIRED
-  -values string
-    	header values to match on (where value in [values]; comma-delimited; REQUIRED)
+  --topic string        kafka topic name; REQUIRED
+  --header string       header name to match on (default "tenantId")
+  --values string       header values to match on (where value in [values]; comma-delimited; REQUIRED)
+  --partitions string   partitions to process; comma-delimited (default "all")
+  --start string        start time (inclusive) (default "0")
+  --stop string         stop time (inclusive) (default "now")
+  --log-ts              log tombstone messages consumed (default true)
+  --log-bad             log bad messages which have no headers
+  --log-pos             log positive matched messages (default true)
+  --log-neg             log negative matched messages
 ```
 
-To enable a flag, use e.g. `-log-bad=true`.
-To disable a flag, use e.g. `-log-pos=false`.
+To enable a flag, use e.g. `--log-bad=true`.
+To disable a flag, use e.g. `--log-pos=false`.
 
-The `-start` and `-stop` arguments can be absolute times in RFC3339 format, or now-relative time expressions
+The `--start` and `--stop` arguments can be absolute times in RFC3339 format, or now-relative time expressions
 e.g. `now-4h`, `now-1d`, `now+1d-3w4mo+7y6h4m`.
 
-The `-header` argument is the name of the header key to match on.
+The `--header` argument is the name of the header key to match on.
 
-The `-values` argument is a comma-delimited list of header values to match on for the header name.
+The `--values` argument is a comma-delimited list of header values to match on for the header name.
 A successful match for the message occurs when _any_ of the header values matches the message's header value.
 
 ## Environment Variables
