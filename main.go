@@ -44,7 +44,7 @@ func main() {
 		logNegMatch    bool
 	)
 
-	flag.StringVar(&topic, "topic", "", "kafka topic name")
+	flag.StringVar(&topic, "topic", "", "kafka topic name; REQUIRED")
 
 	flag.StringVar(&headerName, "header", "tenantId", "header name to match on")
 	flag.StringVar(&headerValuesStr, "values", "", "header values to match on (where value in [values]; comma-delimited; REQUIRED)")
@@ -63,13 +63,13 @@ func main() {
 	flag.Parse()
 	valid := true
 
-	// validate required parameters:
+	// validate required arguments:
 	if headerValuesStr == "" {
-		fmt.Println("required -values parameter")
+		fmt.Println("required -values argument")
 		valid = false
 	}
 	if topic == "" {
-		fmt.Println("required -topic parameter")
+		fmt.Println("required -topic argument")
 		valid = false
 	}
 	if !valid {
@@ -81,7 +81,7 @@ func main() {
 
 	timeStart, err = tparse.ParseNow(time.RFC3339, timeStartStr)
 	if err != nil {
-		fmt.Printf("error parsing 'start': %v\n", err)
+		fmt.Printf("error parsing '-start' argument '%s': %v\n", timeStartStr, err)
 		timeStart = time.Unix(0, 0)
 		err = nil
 	}
@@ -89,7 +89,7 @@ func main() {
 
 	timeStop, err = tparse.ParseNow(time.RFC3339, timeStopStr)
 	if err != nil {
-		fmt.Printf("error parsing 'stop': %v\n", err)
+		fmt.Printf("error parsing '-stop' argument '%s': %v\n", timeStopStr, err)
 		timeStop = time.Now()
 		err = nil
 	}

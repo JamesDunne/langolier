@@ -110,16 +110,20 @@ func createKafkaClient() (addrs []string, conf *sarama.Config, err error) {
 	}
 
 	if IsTruthy(env.GetOrDefault("KAFKA_SASL_ENABLE", "0")) {
+		log.Printf("Kafka SASL enabled\n")
+
 		saslType := env.GetOrDefault("KAFKA_SASL_TYPE", "PLAIN")
 		conf.Net.SASL.Enable = true
 		conf.Net.SASL.Mechanism = sarama.SASLTypePlaintext
 
 		if saslType == "GSSAPI" {
+			log.Printf("Kafka SASL mechanism = %s\n", saslType)
+
 			conf.Net.SASL.Mechanism = sarama.SASLTypeGSSAPI
 
-			authType := env.GetOrDefault("KAFKA_SASL_GSSAPI_AUTH", "")
-			if authType == "KEYTAB" {
-				log.Println("Kafka SASL GSSAPI auth = keytab")
+			credType := env.GetOrDefault("KAFKA_SASL_GSSAPI_AUTH", "KEYTAB")
+			if credType == "KEYTAB" {
+				log.Printf("Kafka SASL GSSAPI credentials = %s\n", credType)
 
 				var krb5Bytes []byte
 				krb5Bytes, err = base64.StdEncoding.DecodeString(env.GetOrFail("KAFKA_SASL_GSSAPI_KRB5CONF"))
@@ -143,7 +147,9 @@ func createKafkaClient() (addrs []string, conf *sarama.Config, err error) {
 					realm,
 					keytabBytes,
 				)
-			} else if authType == "USER" {
+			} else if credType == "PASSWORD" {
+				log.Printf("Kafka SASL GSSAPI credentials = %s\n", credType)
+
 				var krb5Bytes []byte
 				krb5Bytes, err = base64.StdEncoding.DecodeString(env.GetOrFail("KAFKA_SASL_GSSAPI_KRB5CONF"))
 				if err != nil {
@@ -161,8 +167,15 @@ func createKafkaClient() (addrs []string, conf *sarama.Config, err error) {
 					realm,
 					password,
 				)
+			} else {
+				log.Printf("Kafka SASL GSSAPI credentials = %s; unrecognized credential type\n", credType)
 			}
+		} else {
+			log.Printf("Kafka SASL mechanism = %s; unrecognized mechanism\n", saslType)
 		}
+	} else {
+		// TODO: add env vars for Username/Password for PLAINTEXT
+		log.Printf("Kafka SASL disabled\n")
 	}
 
 	addrs = strings.Split(env.GetOrDefault("KAFKA_SERVERS", "localhost:9092"), ",")

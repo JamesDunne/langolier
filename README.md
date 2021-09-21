@@ -46,12 +46,12 @@ A successful match for the message occurs when _any_ of the header values matche
 | KAFKA_TLS_ROOT_CA | | Base64 encoded PEM root certificates for TLS connection |
 | KAFKA_SASL_ENABLE | 0 | Enable SASL authentication to Kafka brokers (0 = disabled, 1 = enabled) |
 | KAFKA_SASL_TYPE | PLAINTEXT | Select between PLAINTEXT or GSSAPI SASL mechanism if SASL enabled |
-| KAFKA_SASL_GSSAPI_AUTH | KEYTAB | Select between KEYTAB or USER credentials for GSSAPI mechanism |
+| KAFKA_SASL_GSSAPI_AUTH | KEYTAB | Select between KEYTAB or PASSWORD credentials for GSSAPI mechanism |
 | KAFKA_SASL_GSSAPI_KRB5CONF | | Base64-encoded krb5.conf file if GSSAPI enabled |
 | KAFKA_SASL_GSSAPI_USERNAME | | Username (without @realm) for GSSAPI |
 | KAFKA_SASL_GSSAPI_REALM | | Realm for GSSAPI |
 | KAFKA_SASL_GSSAPI_KEYTAB | | Base64-encoded keytab if using KEYTAB credentials |
-| KAFKA_SASL_GSSAPI_PASSWORD | | Password if using USER credentials |
+| KAFKA_SASL_GSSAPI_PASSWORD | | Password if using PASSWORD credentials |
 | KAFKA_TMP | /tmp/kafka | Temporary directory to store kafka configuration files; a folder with the process ID is created |
 
 If receiving errors about common name validation failing for TLS, `export GODEBUG="x509ignoreCN=0"` and re-run the tool.
