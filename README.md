@@ -2,6 +2,7 @@
 Langolier is a CLI tool to consume a Kafka topic and emit tombstones for messages matched by header name/value pairs.
 
 ## Usage
+```
 Usage of langolier:
   -header string
     	header name to match on (default "tenantId")
@@ -23,6 +24,7 @@ Usage of langolier:
     	kafka topic name; REQUIRED
   -values string
     	header values to match on (where value in [values]; comma-delimited; REQUIRED)
+```
 
 To enable a flag, use e.g. `-log-bad=true`.
 To disable a flag, use e.g. `-log-pos=false`.
