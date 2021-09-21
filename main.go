@@ -43,7 +43,7 @@ func main() {
 		headerValuesBytes[i] = []byte(headerValues[i])
 	}
 
-	sarama.Logger = log.New(os.Stderr, "sarama: ", log.LUTC|log.Lmicroseconds|log.Ltime|log.Lmsgprefix)
+	sarama.Logger = log.New(os.Stderr, "kafka: ", log.LUTC|log.Lmicroseconds|log.Ltime|log.Lmsgprefix)
 
 	processTmpDir = env.GetOrSupply("KAFKA_TMP", func() string {
 		return os.TempDir()
@@ -67,10 +67,44 @@ func main() {
 	// use the raw Partition value in ProducerMessage
 	conf.Producer.Partitioner = sarama.NewManualPartitioner
 
-	var client sarama.Client
-	client, err = sarama.NewClient(addrs, conf)
+	err = tombstonePartition(
+		ClientConfig{
+			Addrs: addrs,
+			Conf:  conf,
+		},
+		TombstoneConfig{
+			Topic:                     topic,
+			TopicPartition:            topicPartition,
+			TopicPartitionOffsetStart: topicPartitionOffsetStart,
+			TopicPartitionOffsetStop:  topicPartitionOffsetStop,
+			HeaderNameBytes:           headerNameBytes,
+			HeaderValuesBytes:         headerValuesBytes,
+		},
+	)
 	if err != nil {
-		log.Fatalln(err)
+		log.Println(err)
+	}
+}
+
+type ClientConfig struct {
+	Addrs []string
+	Conf  *sarama.Config
+}
+
+type TombstoneConfig struct {
+	Topic                     string
+	TopicPartition            int
+	TopicPartitionOffsetStart int64
+	TopicPartitionOffsetStop  int64
+	HeaderNameBytes           []byte
+	HeaderValuesBytes         [][]byte
+}
+
+func tombstonePartition(clientConf ClientConfig, tombstoneConfig TombstoneConfig) (err error) {
+	var client sarama.Client
+	client, err = sarama.NewClient(clientConf.Addrs, clientConf.Conf)
+	if err != nil {
+		return
 	}
 
 	defer func() {
@@ -83,28 +117,32 @@ func main() {
 	var prod sarama.SyncProducer
 	prod, err = sarama.NewSyncProducerFromClient(client)
 	if err != nil {
-		log.Fatalln(err)
+		return
 	}
 
 	var cons sarama.Consumer
 	cons, err = sarama.NewConsumerFromClient(client)
 	if err != nil {
-		log.Fatalln(err)
+		return
 	}
 
 	// consume a partition from start to end:
 	var partitionConsumer sarama.PartitionConsumer
-	partitionConsumer, err = cons.ConsumePartition(topic, int32(topicPartition), topicPartitionOffsetStart)
+	partitionConsumer, err = cons.ConsumePartition(
+		tombstoneConfig.Topic,
+		int32(tombstoneConfig.TopicPartition),
+		tombstoneConfig.TopicPartitionOffsetStart,
+	)
 	if err != nil {
 		return
 	}
 
 	log.Printf(
 		"consuming topic '%s' partition %d from offset %7d to %7d (inclusive)",
-		topic,
-		topicPartition,
-		topicPartitionOffsetStart,
-		topicPartitionOffsetStop,
+		tombstoneConfig.Topic,
+		tombstoneConfig.TopicPartition,
+		tombstoneConfig.TopicPartitionOffsetStart,
+		tombstoneConfig.TopicPartitionOffsetStop,
 	)
 	for message := range partitionConsumer.Messages() {
 		var match bool
@@ -115,11 +153,11 @@ func main() {
 		partition = message.Partition
 		offset = message.Offset
 
-		prefix := fmt.Sprintf("[%s][%3d][%7d]", topic, partition, offset)
+		prefix := fmt.Sprintf("[%s][%3d][%7d]", tombstoneConfig.Topic, partition, offset)
 
 		// stop is inclusive, so only check if we've consumed an offset greater than it:
-		if offset > topicPartitionOffsetStop {
-			log.Printf("%s: stopping because consuming next message would exceed stop offset %7d\n", prefix, topicPartitionOffsetStop)
+		if offset > tombstoneConfig.TopicPartitionOffsetStop {
+			log.Printf("%s: stopping because consuming next message would exceed stop offset %7d\n", prefix, tombstoneConfig.TopicPartitionOffsetStop)
 			break
 		}
 
@@ -142,12 +180,12 @@ func main() {
 	findMatch:
 		for _, h := range message.Headers {
 			// check header key:
-			if bytes.Compare(h.Key, headerNameBytes) != 0 {
+			if bytes.Compare(h.Key, tombstoneConfig.HeaderNameBytes) != 0 {
 				continue
 			}
 
 			// check header value:
-			for _, v := range headerValuesBytes {
+			for _, v := range tombstoneConfig.HeaderValuesBytes {
 				if bytes.Compare(h.Value, v) == 0 {
 					match = true
 					log.Printf("%s: matched key='%s' on header %s='%s'\n", prefix, message.Key, h.Key, h.Value)
@@ -170,7 +208,7 @@ func main() {
 		// produce tombstone for key:
 		log.Printf("%s: writing tombstone for key='%s'...\n", prefix, message.Key)
 		partition, offset, err = prod.SendMessage(&sarama.ProducerMessage{
-			Topic:     topic,
+			Topic:     tombstoneConfig.Topic,
 			Key:       sarama.ByteEncoder(message.Key),
 			Value:     nil,
 			Headers:   outputHeaders,
@@ -178,20 +216,22 @@ func main() {
 			Partition: message.Partition,
 		})
 		if err != nil {
-			log.Fatalln(err)
 			return
 		}
 		if partition != message.Partition {
-			log.Fatalf("%s: BUG: wrote to wrong partition! wrote to %d but should have written to %d\n", prefix, partition, message.Partition)
+			err = fmt.Errorf("%s: BUG: wrote to wrong partition! wrote to %d but should have written to %d\n", prefix, partition, message.Partition)
 			return
 		}
 
 		log.Printf("%s: wrote tombstone for key='%s' at offset %7d\n", prefix, message.Key, offset)
 
 	checkOffset:
-		if message.Offset >= topicPartitionOffsetStop {
-			log.Printf("%s: stopping because reached stop offset %7d\n", prefix, topicPartitionOffsetStop)
+		if message.Offset >= tombstoneConfig.TopicPartitionOffsetStop {
+			log.Printf("%s: stopping because reached stop offset %7d\n", prefix, tombstoneConfig.TopicPartitionOffsetStop)
 			break
 		}
 	}
+
+	err = nil
+	return
 }
