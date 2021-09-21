@@ -25,9 +25,6 @@ var (
 func main() {
 	var err error
 
-	log.SetOutput(os.Stdout)
-	log.SetFlags(log.LUTC | log.Lmicroseconds | log.Ltime)
-
 	var (
 		topic string
 
@@ -68,11 +65,11 @@ func main() {
 
 	// validate required parameters:
 	if headerValuesStr == "" {
-		log.Println("required -values parameter")
+		fmt.Println("required -values parameter")
 		valid = false
 	}
 	if topic == "" {
-		log.Println("required -topic parameter")
+		fmt.Println("required -topic parameter")
 		valid = false
 	}
 	if !valid {
@@ -84,19 +81,19 @@ func main() {
 
 	timeStart, err = tparse.ParseNow(time.RFC3339, timeStartStr)
 	if err != nil {
-		log.Printf("error parsing 'start': %v\n", err)
+		fmt.Printf("error parsing 'start': %v\n", err)
 		timeStart = time.Unix(0, 0)
 		err = nil
 	}
-	log.Printf("parsed -start '%s' as '%s'\n", timeStartStr, timeStart)
+	fmt.Printf("parsed -start '%s' as '%s'\n", timeStartStr, timeStart)
 
 	timeStop, err = tparse.ParseNow(time.RFC3339, timeStopStr)
 	if err != nil {
-		log.Printf("error parsing 'stop': %v\n", err)
+		fmt.Printf("error parsing 'stop': %v\n", err)
 		timeStop = time.Now()
 		err = nil
 	}
-	log.Printf("parsed -stop '%s' as '%s'\n", timeStopStr, timeStop)
+	fmt.Printf("parsed -stop '%s' as '%s'\n", timeStopStr, timeStop)
 
 	headerValues = strings.Split(headerValuesStr, ",")
 
@@ -105,6 +102,10 @@ func main() {
 	for i := range headerValues {
 		headerValuesBytes[i] = []byte(headerValues[i])
 	}
+
+	// set up logging:
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.LUTC | log.Lmicroseconds | log.Ltime)
 
 	sarama.Logger = log.New(os.Stderr, "kafka: ", log.LUTC|log.Lmicroseconds|log.Ltime|log.Lmsgprefix)
 
@@ -118,6 +119,7 @@ func main() {
 		return
 	}
 
+	// process env vars for kafka config:
 	var addrs []string
 	var conf *sarama.Config
 	addrs, conf, err = createKafkaClient()
@@ -130,6 +132,7 @@ func main() {
 	// use the raw Partition value in ProducerMessage
 	conf.Producer.Partitioner = sarama.NewManualPartitioner
 
+	// create a kafka client:
 	var client sarama.Client
 	client, err = sarama.NewClient(addrs, conf)
 	if err != nil {
@@ -284,151 +287,168 @@ func tombstonePartitions(
 
 	// consume each partition individually:
 	wg := sync.WaitGroup{}
+	wg.Add(len(tombstoneConfig.Partitions))
 	for _, partition := range tombstoneConfig.Partitions {
-		offsetStart := offsetStarts[partition]
-		offsetStop := offsetStops[partition]
+		go func(partition int32) {
+			offsetStart := offsetStarts[partition]
+			offsetStop := offsetStops[partition]
 
-		// consume a partition from start to end:
-		log.Printf(
-			"[%s][%3d] creating partition consumer from offset %7d to %7d (inclusive)",
-			topic,
-			partition,
-			offsetStart,
-			offsetStop,
-		)
-		var pc sarama.PartitionConsumer
-		pc, err = cons.ConsumePartition(topic, partition, offsetStart)
-		if err != nil {
-			return
-		}
-		log.Printf(
-			"[%s][%3d] created partition consumer from offset %7d to %7d (inclusive)",
-			topic,
-			partition,
-			offsetStart,
-			offsetStop,
-		)
-
-		go func(pc sarama.PartitionConsumer, partition int32) {
-			<-closing
-
+			// consume a partition from start to end:
 			log.Printf(
-				"[%s][%3d] stopping partition consumer",
-				topic,
-				partition,
-			)
-			pc.AsyncClose()
-		}(pc, partition)
-
-		wg.Add(1)
-		go func(pc sarama.PartitionConsumer, partition int32) {
-			defer wg.Done()
-
-			log.Printf(
-				"[%s][%3d] consuming partition from offset %7d to %7d (inclusive)",
+				"[%s][%3d] creating partition consumer from offset %7d to %7d (inclusive)",
 				topic,
 				partition,
 				offsetStart,
 				offsetStop,
 			)
-			for message := range pc.Messages() {
-				var match bool
-				var mpartition int32
-				var moffset int64
-				var outputHeaders []sarama.RecordHeader
+			var pc sarama.PartitionConsumer
+			pc, err = cons.ConsumePartition(topic, partition, offsetStart)
+			if err != nil {
+				wg.Done()
+				return
+			}
+			log.Printf(
+				"[%s][%3d] created partition consumer from offset %7d to %7d (inclusive)",
+				topic,
+				partition,
+				offsetStart,
+				offsetStop,
+			)
 
-				mpartition = message.Partition
-				moffset = message.Offset
+			go func(pc sarama.PartitionConsumer) {
+				<-closing
 
-				prefix := fmt.Sprintf("[%s][%3d][%7d/%7d]", topic, mpartition, moffset, offsetStop)
+				log.Printf(
+					"[%s][%3d] stopping partition consumer",
+					topic,
+					partition,
+				)
+				pc.AsyncClose()
+			}(pc)
 
-				// stop is inclusive, so only check if we've consumed an offset greater than it:
-				if moffset > offsetStop {
-					log.Printf("%s: stopping because consuming next message would exceed stop offset %7d\n", prefix, offsetStop)
-					break
-				}
+			go func(pc sarama.PartitionConsumer) {
+				var err error
 
-				// skip existing tombstones:
-				if message.Value == nil {
-					if tombstoneConfig.LogTombstones {
-						log.Printf("%s: skipping message for key='%s' because tombstone...\n", prefix, message.Key)
+				defer wg.Done()
+
+				log.Printf(
+					"[%s][%3d] consuming partition from offset %7d to %7d (inclusive)",
+					topic,
+					partition,
+					offsetStart,
+					offsetStop,
+				)
+
+			messageLoop:
+				for message := range pc.Messages() {
+					// quick check if closing down:
+					select {
+					case <-closing:
+						break messageLoop
+					default:
+						break
 					}
-					goto checkOffset
-				}
-				if len(message.Value) == 0 {
-					if tombstoneConfig.LogTombstones {
-						log.Printf("%s: skipping message for key='%s' because tombstone...\n", prefix, message.Key)
-					}
-					goto checkOffset
-				}
-				if len(message.Headers) == 0 {
-					if tombstoneConfig.LogBadMessages {
-						log.Printf("%s: skipping message for key='%s' because no headers found...\n", prefix, message.Key)
-					}
-					goto checkOffset
-				}
 
-				// check header values:
-				match = false
-			findMatch:
-				for _, h := range message.Headers {
-					// check header key:
-					if bytes.Compare(h.Key, tombstoneConfig.HeaderNameBytes) != 0 {
-						continue
+					var match bool
+					var mpartition int32
+					var moffset int64
+					var outputHeaders []sarama.RecordHeader
+
+					mpartition = message.Partition
+					moffset = message.Offset
+
+					prefix := fmt.Sprintf("[%s][%3d][%7d/%7d]", topic, mpartition, moffset, offsetStop)
+
+					// stop is inclusive, so only check if we've consumed an offset greater than it:
+					if moffset > offsetStop {
+						log.Printf("%s: stopping because consuming next message would exceed stop offset %7d\n", prefix, offsetStop)
+						break messageLoop
 					}
 
-					// check header value:
-					for _, v := range tombstoneConfig.HeaderValuesBytes {
-						if bytes.Compare(h.Value, v) == 0 {
-							match = true
-							if tombstoneConfig.LogPosMatch {
-								log.Printf("%s: matched key='%s' on header %s='%s'\n", prefix, message.Key, h.Key, h.Value)
+					// skip existing tombstones:
+					if message.Value == nil {
+						if tombstoneConfig.LogTombstones {
+							log.Printf("%s: skipping message for key='%s' because tombstone...\n", prefix, message.Key)
+						}
+						goto checkOffset
+					}
+					if len(message.Value) == 0 {
+						if tombstoneConfig.LogTombstones {
+							log.Printf("%s: skipping message for key='%s' because tombstone...\n", prefix, message.Key)
+						}
+						goto checkOffset
+					}
+					if len(message.Headers) == 0 {
+						if tombstoneConfig.LogBadMessages {
+							log.Printf("%s: skipping message for key='%s' because no headers found...\n", prefix, message.Key)
+						}
+						goto checkOffset
+					}
+
+					// check header values:
+					match = false
+				findMatch:
+					for _, h := range message.Headers {
+						// check header key:
+						if bytes.Compare(h.Key, tombstoneConfig.HeaderNameBytes) != 0 {
+							continue
+						}
+
+						// check header value:
+						for _, v := range tombstoneConfig.HeaderValuesBytes {
+							if bytes.Compare(h.Value, v) == 0 {
+								match = true
+								if tombstoneConfig.LogPosMatch {
+									log.Printf("%s: matched key='%s' on header %s='%s'\n", prefix, message.Key, h.Key, h.Value)
+								}
+								break findMatch
 							}
-							break findMatch
 						}
 					}
-				}
 
-				if !match {
-					if tombstoneConfig.LogNegMatch {
-						log.Printf("%s: skipping message for key='%s' because no header matches...\n", prefix, message.Key)
+					if !match {
+						if tombstoneConfig.LogNegMatch {
+							log.Printf("%s: skipping message for key='%s' because no header matches...\n", prefix, message.Key)
+						}
+						goto checkOffset
 					}
-					goto checkOffset
-				}
 
-				// copy headers:
-				outputHeaders = make([]sarama.RecordHeader, len(message.Headers))
-				for i := range message.Headers {
-					outputHeaders[i] = *message.Headers[i]
-				}
+					// copy headers:
+					outputHeaders = make([]sarama.RecordHeader, len(message.Headers))
+					for i := range message.Headers {
+						outputHeaders[i] = *message.Headers[i]
+					}
 
-				// produce tombstone for key:
-				log.Printf("%s: writing tombstone for key='%s'...\n", prefix, message.Key)
-				mpartition, moffset, err = prod.SendMessage(&sarama.ProducerMessage{
-					Topic:     topic,
-					Key:       sarama.ByteEncoder(message.Key),
-					Value:     nil,
-					Headers:   outputHeaders,
-					Metadata:  nil,
-					Partition: message.Partition,
-				})
-				if err != nil {
-					return
-				}
-				if mpartition != message.Partition {
-					err = fmt.Errorf("%s: BUG: wrote to wrong partition! wrote to %d but should have written to %d\n", prefix, mpartition, message.Partition)
-					return
-				}
+					// produce tombstone for key:
+					log.Printf("%s: writing tombstone for key='%s'...\n", prefix, message.Key)
+					mpartition, moffset, err = prod.SendMessage(&sarama.ProducerMessage{
+						Topic:     topic,
+						Key:       sarama.ByteEncoder(message.Key),
+						Value:     nil,
+						Headers:   outputHeaders,
+						Metadata:  nil,
+						Partition: message.Partition,
+					})
+					if err != nil {
+						log.Printf("%s: %v\n", prefix, err)
+						return
+					}
+					if mpartition != message.Partition {
+						err = fmt.Errorf("%s: BUG: wrote to wrong partition! wrote to %d but should have written to %d\n", prefix, mpartition, message.Partition)
+						log.Println(err)
+						return
+					}
 
-				log.Printf("%s: wrote tombstone for key='%s' at offset %7d\n", prefix, message.Key, moffset)
+					log.Printf("%s: wrote tombstone for key='%s' at offset %7d\n", prefix, message.Key, moffset)
 
-			checkOffset:
-				if message.Offset >= offsetStop {
-					log.Printf("%s: stopping because reached stop offset %7d\n", prefix, offsetStop)
-					break
+				checkOffset:
+					if message.Offset >= offsetStop {
+						log.Printf("%s: stopping because reached stop offset %7d\n", prefix, offsetStop)
+						break messageLoop
+					}
 				}
-			}
-		}(pc, partition)
+			}(pc)
+		}(partition)
 	}
 	wg.Wait()
 
