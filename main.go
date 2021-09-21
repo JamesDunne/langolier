@@ -49,13 +49,13 @@ func main() {
 
 	flag.StringVar(&topic, "topic", "", "kafka topic name")
 
+	flag.StringVar(&headerName, "header", "tenantId", "header name to match on")
+	flag.StringVar(&headerValuesStr, "values", "", "header values to match on (where value in [values]; comma-delimited; REQUIRED)")
+
 	flag.StringVar(&partitionsStr, "partitions", "all", "partitions to process (default 'all'; comma-delimited)")
 
 	flag.StringVar(&timeStartStr, "start", "0", "start time (inclusive; default earliest)")
 	flag.StringVar(&timeStopStr, "stop", "now", "stop time (inclusive; default now)")
-
-	flag.StringVar(&headerName, "header", "tenantId", "header name to match on")
-	flag.StringVar(&headerValuesStr, "values", "", "header values to match on (where value in [values]; comma-delimited)")
 
 	// "-log-ts=false" to disable these
 	flag.BoolVar(&logTombstones, "log-ts", true, "log tombstone messages consumed")
@@ -64,29 +64,40 @@ func main() {
 	flag.BoolVar(&logNegMatch, "log-neg", false, "log negative matched messages")
 
 	flag.Parse()
+	valid := true
 
-	log.Printf("parsing '%s'\n", timeStartStr)
+	// validate required parameters:
+	if headerValuesStr == "" {
+		log.Println("required -values parameter")
+		valid = false
+	}
+	if topic == "" {
+		log.Println("required -topic parameter")
+		valid = false
+	}
+	if !valid {
+		flag.Usage()
+		return
+	}
+
+	flag.PrintDefaults()
+
 	timeStart, err = tparse.ParseNow(time.RFC3339, timeStartStr)
 	if err != nil {
 		log.Printf("error parsing 'start': %v\n", err)
 		timeStart = time.Unix(0, 0)
 		err = nil
 	}
-	log.Printf("parsed as '%s'\n", timeStart)
+	log.Printf("parsed -start '%s' as '%s'\n", timeStartStr, timeStart)
 
-	log.Printf("parsing '%s'\n", timeStopStr)
 	timeStop, err = tparse.ParseNow(time.RFC3339, timeStopStr)
 	if err != nil {
 		log.Printf("error parsing 'stop': %v\n", err)
 		timeStop = time.Now()
 		err = nil
 	}
-	log.Printf("parsed as '%s'\n", timeStop)
+	log.Printf("parsed -stop '%s' as '%s'\n", timeStopStr, timeStop)
 
-	if headerValuesStr == "" {
-		log.Fatalln("required -values parameter")
-		return
-	}
 	headerValues = strings.Split(headerValuesStr, ",")
 
 	headerNameBytes := []byte(headerName)
